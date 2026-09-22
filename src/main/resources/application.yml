@@ -2,7 +2,7 @@ spring:
   application:
     name: conveyor-ci
   datasource:
-    url: ${DB_URL:jdbc:postgresql://localhost:5433/conveyor}
+    url: ${DB_URL:jdbc:postgresql://localhost:54329/conveyor}
     username: ${DB_USER:conveyor}
     password: ${DB_PASSWORD:conveyor}
   jpa:
