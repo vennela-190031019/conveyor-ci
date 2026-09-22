@@ -1,0 +1,31 @@
+# Example pipeline. Jobs run in parallel unless connected by `needs`.
+name: build-test-deploy
+
+jobs:
+  build:
+    image: maven:3.9-eclipse-temurin-21
+    steps:
+      - name: Compile
+        run: mvn -B -q compile
+
+  unit-tests:
+    image: maven:3.9-eclipse-temurin-21
+    needs: build
+    retries: 1            # re-run once on failure (flaky-test tolerance)
+    timeout_minutes: 15
+    steps:
+      - name: Run tests
+        run: mvn -B test
+
+  lint:
+    image: node:20-alpine
+    needs: build
+    steps:
+      - run: npx prettier --check .
+
+  deploy:
+    image: alpine:3.20
+    needs: [unit-tests, lint]
+    steps:
+      - name: Deploy
+        run: echo "deploying..."

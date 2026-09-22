@@ -1,0 +1,25 @@
+spring:
+  application:
+    name: conveyor-ci
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/conveyor}
+    username: ${DB_USER:conveyor}
+    password: ${DB_PASSWORD:conveyor}
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate   # Flyway owns the schema; Hibernate only checks it matches the entities
+    properties:
+      hibernate:
+        default_batch_fetch_size: 50   # loads jobs/steps/dependencies in batches, avoiding N+1 queries
+  flyway:
+    enabled: true
+
+server:
+  port: ${PORT:8080}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
