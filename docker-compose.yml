@@ -6,7 +6,7 @@ services:
       POSTGRES_USER: conveyor
       POSTGRES_PASSWORD: conveyor
     ports:
-      - "54329:5432"
+      - "54329:5432"   # uncommon host port avoids clashing with other local Postgres instances
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -18,7 +18,7 @@ services:
   redis:
     image: redis:7-alpine
     ports:
-      - "63790:6379"
+      - "63790:6379"   # uncommon host port avoids clashing with other local Redis instances
 
 volumes:
   pgdata:

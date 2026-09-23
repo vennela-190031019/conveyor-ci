@@ -5,6 +5,10 @@ spring:
     url: ${DB_URL:jdbc:postgresql://localhost:54329/conveyor}
     username: ${DB_USER:conveyor}
     password: ${DB_PASSWORD:conveyor}
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:63790}
   jpa:
     open-in-view: false
     hibernate:
@@ -23,3 +27,19 @@ management:
     web:
       exposure:
         include: health,info
+
+conveyor:
+  scheduler:
+    enabled: true            # set false on worker-only nodes
+    interval-ms: 1000        # how often the scheduler promotes, reaps and dispatches
+    redispatch-seconds: 30   # re-push QUEUED jobs nobody claimed (covers lost Redis messages)
+  worker:
+    enabled: true            # set false on API-only nodes
+    concurrency: 2           # jobs this process runs at once
+    lease-seconds: 30        # a job is re-queued this long after its worker stops heartbeating
+  retry:
+    base-delay-ms: 2000      # backoff = base * 2^(attempt-1), +/-20% jitter
+    max-delay-ms: 60000
+  docker:
+    memory: 1g               # per-job container limits
+    cpus: 1

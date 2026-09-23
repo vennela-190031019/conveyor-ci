@@ -77,6 +77,13 @@ public class Job {
     @Column(name = "finished_at")
     private Instant finishedAt;
 
+    // Written only by the engine (JobStore / SchedulerStore); read-only from JPA's point of view.
+    @Column(name = "worker_id", length = 100, insertable = false, updatable = false)
+    private String workerId;
+
+    @Column(name = "failure_reason", length = 500, insertable = false, updatable = false)
+    private String failureReason;
+
     protected Job() {
     }
 
@@ -115,4 +122,6 @@ public class Job {
     public Instant getCreatedAt() { return createdAt; }
     public Instant getStartedAt() { return startedAt; }
     public Instant getFinishedAt() { return finishedAt; }
+    public String getWorkerId() { return workerId; }
+    public String getFailureReason() { return failureReason; }
 }

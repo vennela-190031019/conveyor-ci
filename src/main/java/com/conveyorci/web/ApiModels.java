@@ -53,12 +53,14 @@ public final class ApiModels {
     }
 
     public record JobResponse(Long id, String name, String image, int stage, JobStatus status, List<String> needs,
-                              int attempt, int maxAttempts, int timeoutMinutes, Instant startedAt,
-                              Instant finishedAt, List<StepResponse> steps) {
+                              int attempt, int maxAttempts, int timeoutMinutes, String workerId,
+                              String failureReason, Instant startedAt, Instant finishedAt,
+                              List<StepResponse> steps) {
         static JobResponse from(Job j) {
             return new JobResponse(j.getId(), j.getName(), j.getImage(), j.getStage(), j.getStatus(),
                     List.copyOf(j.getDependsOn()), j.getAttempt(), j.getMaxAttempts(), j.getTimeoutMinutes(),
-                    j.getStartedAt(), j.getFinishedAt(), j.getSteps().stream().map(StepResponse::from).toList());
+                    j.getWorkerId(), j.getFailureReason(), j.getStartedAt(), j.getFinishedAt(),
+                    j.getSteps().stream().map(StepResponse::from).toList());
         }
     }
 

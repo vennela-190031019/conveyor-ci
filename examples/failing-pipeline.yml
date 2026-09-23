@@ -1,0 +1,16 @@
+# Demonstrates retries with backoff and downstream skipping.
+# `test` fails on every attempt (3 total), so `deploy` is SKIPPED and the run FAILS.
+name: failing-demo
+
+jobs:
+  test:
+    image: alpine:3.20
+    retries: 2
+    steps:
+      - run: echo "running tests" && exit 1
+
+  deploy:
+    image: alpine:3.20
+    needs: test
+    steps:
+      - run: echo "this never runs"

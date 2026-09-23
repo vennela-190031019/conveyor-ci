@@ -1,0 +1,15 @@
+# Long-running jobs, for the crash-recovery and cancellation demos.
+name: slow-demo
+
+jobs:
+  slow-a:
+    image: alpine:3.20
+    retries: 1
+    steps:
+      - run: for i in $(seq 1 40); do echo "tick $i"; sleep 1; done
+
+  slow-b:
+    image: alpine:3.20
+    retries: 1
+    steps:
+      - run: for i in $(seq 1 40); do echo "tick $i"; sleep 1; done

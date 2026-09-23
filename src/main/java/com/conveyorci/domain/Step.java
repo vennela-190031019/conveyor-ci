@@ -51,6 +51,10 @@ public class Step {
     @Column(name = "finished_at")
     private Instant finishedAt;
 
+    // Written only by the worker; exposed through the logs endpoint, not the run response.
+    @Column(columnDefinition = "TEXT", insertable = false, updatable = false)
+    private String log;
+
     protected Step() {
     }
 
@@ -74,4 +78,5 @@ public class Step {
     public Integer getExitCode() { return exitCode; }
     public Instant getStartedAt() { return startedAt; }
     public Instant getFinishedAt() { return finishedAt; }
+    public String getLog() { return log; }
 }
