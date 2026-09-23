@@ -7,9 +7,11 @@ executed in Docker containers by a pool of workers that recovers automatically f
 > the commit, runs its `.conveyor.yml` across a pool of workers, streams the logs live to a
 > React dashboard, and reports ✓/✗ on the commit. This repository builds itself on Conveyor
 > (see [`.conveyor.yml`](.conveyor.yml)).
-> Next up: AWS deployment and authentication (Phase 5).
+> Next up: load testing with published throughput and latency numbers.
 
 ![Run page: pipeline graph and live logs](docs/dashboard-run.png)
+
+![Runs page: recent runs, pass rate and worker capacity](docs/dashboard-runs.png)
 
 ## Architecture
 
