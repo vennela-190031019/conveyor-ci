@@ -1,0 +1,22 @@
+# Conveyor CI builds itself: once the GitHub webhook is set up, every push to this repository
+# runs this pipeline on Conveyor, and the result shows up as a ✓/✗ on the commit.
+name: conveyor-ci
+
+jobs:
+  build:
+    image: maven:3.9-eclipse-temurin-21
+    timeout_minutes: 20
+    steps:
+      - name: Compile and package
+        run: mvn -B -q -DskipTests package
+      - name: Unit tests
+        # Integration tests need Docker (Testcontainers), which isn't available inside a job container.
+        run: mvn -B -q test -Dtest='PipelineParserTest,BackoffTest,LogBufferTest,WebhookSignatureVerifierTest' -Dsurefire.failIfNoSpecifiedTests=false
+
+  repo-checks:
+    image: alpine:3.20
+    steps:
+      - name: Required files
+        run: test -f README.md && test -f pom.xml && test -f docker-compose.yml && echo "required files present"
+      - name: No committed GitHub tokens
+        run: if grep -rIlE 'ghp_[A-Za-z0-9]{36}' . ; then echo "found a GitHub token"; exit 1; fi; echo "no tokens found"

@@ -8,6 +8,7 @@ import com.conveyorci.domain.Job;
 import com.conveyorci.domain.PipelineRun;
 import com.conveyorci.domain.Project;
 import com.conveyorci.domain.Statuses.JobStatus;
+import com.conveyorci.domain.Statuses.RunSource;
 import com.conveyorci.domain.Statuses.RunStatus;
 import com.conveyorci.domain.Statuses.StepStatus;
 import com.conveyorci.domain.Step;
@@ -39,11 +40,20 @@ public final class ApiModels {
         }
     }
 
+    /**
+     * @param checkout if true, workers download the project's GitHub repository at {@code commitSha}
+     *                 (a full 40-character SHA or a branch name) before running steps
+     */
     public record TriggerRunRequest(
             @NotBlank @Pattern(regexp = "[0-9a-fA-F]{7,40}", message = "must be a 7-40 character hex commit SHA")
             String commitSha,
             @NotBlank @Size(max = 255) String branch,
-            @NotBlank String pipelineYaml) {
+            @NotBlank String pipelineYaml,
+            Boolean checkout) {
+
+        public TriggerRunRequest(String commitSha, String branch, String pipelineYaml) {
+            this(commitSha, branch, pipelineYaml, null);
+        }
     }
 
     public record StepResponse(int position, String name, String command, StepStatus status, Integer exitCode) {
@@ -65,13 +75,15 @@ public final class ApiModels {
     }
 
     public record RunResponse(Long id, Long projectId, int runNumber, String pipelineName, String commitSha,
-                              String branch, RunStatus status, Instant createdAt, Instant startedAt,
+                              String branch, RunStatus status, RunSource source, boolean checkout,
+                              String failureReason, Instant createdAt, Instant startedAt,
                               Instant finishedAt, List<List<String>> stages, List<JobResponse> jobs) {
         public static RunResponse from(PipelineRun r) {
             List<JobResponse> jobs = r.getJobs().stream().map(JobResponse::from).toList();
             return new RunResponse(r.getId(), r.getProject().getId(), r.getRunNumber(), r.getPipelineName(),
-                    r.getCommitSha(), r.getBranch(), r.getStatus(), r.getCreatedAt(), r.getStartedAt(),
-                    r.getFinishedAt(), stagesOf(jobs), jobs);
+                    r.getCommitSha(), r.getBranch(), r.getStatus(), r.getSource(), r.isCheckout(),
+                    r.getFailureReason(), r.getCreatedAt(), r.getStartedAt(), r.getFinishedAt(),
+                    stagesOf(jobs), jobs);
         }
 
         private static List<List<String>> stagesOf(List<JobResponse> jobs) {
@@ -87,10 +99,10 @@ public final class ApiModels {
     }
 
     public record RunSummary(Long id, int runNumber, String pipelineName, String commitSha, String branch,
-                             RunStatus status, Instant createdAt, Instant finishedAt) {
+                             RunStatus status, RunSource source, Instant createdAt, Instant finishedAt) {
         public static RunSummary from(PipelineRun r) {
             return new RunSummary(r.getId(), r.getRunNumber(), r.getPipelineName(), r.getCommitSha(),
-                    r.getBranch(), r.getStatus(), r.getCreatedAt(), r.getFinishedAt());
+                    r.getBranch(), r.getStatus(), r.getSource(), r.getCreatedAt(), r.getFinishedAt());
         }
     }
 

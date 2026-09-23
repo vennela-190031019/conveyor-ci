@@ -1,13 +1,10 @@
 package com.conveyorci.engine;
 
-import java.io.BufferedReader;
 import java.io.IOException;
-import java.io.InputStreamReader;
-import java.nio.charset.StandardCharsets;
+import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 
 import org.slf4j.Logger;
@@ -25,6 +22,7 @@ public class DockerCliRuntime implements ContainerRuntime {
 
     private static final Logger log = LoggerFactory.getLogger(DockerCliRuntime.class);
     private static final Duration START_TIMEOUT = Duration.ofMinutes(10); // includes image pull
+    private static final Duration COPY_TIMEOUT = Duration.ofMinutes(5);
 
     private final String docker;
     private final String memoryLimit;
@@ -41,32 +39,33 @@ public class DockerCliRuntime implements ContainerRuntime {
     @Override
     public void start(String image, String containerName) throws IOException, InterruptedException {
         // `tail -f /dev/null` keeps the container alive between steps and exists in every base image.
-        List<String> command = List.of(docker, "run", "-d",
+        runOrThrow(List.of(docker, "run", "-d",
                 "--name", containerName,
                 "--label", "conveyor.managed=true",
                 "--memory", memoryLimit,
                 "--cpus", cpuLimit,
                 "-w", "/workspace",
                 "--entrypoint", "tail",
-                image, "-f", "/dev/null");
-        List<String> output = new ArrayList<>();
-        ExecResult result = run(command, START_TIMEOUT, output::add);
-        if (result.timedOut() || result.exitCode() != 0) {
-            throw new IOException("could not start container from image '" + image + "': "
-                    + String.join(" ", output.subList(Math.max(0, output.size() - 5), output.size())));
-        }
+                image, "-f", "/dev/null"), START_TIMEOUT, "could not start container from image '" + image + "'");
+    }
+
+    @Override
+    public void copyInto(String containerName, Path directory) throws IOException, InterruptedException {
+        // The trailing "/." copies the directory's contents rather than the directory itself.
+        runOrThrow(List.of(docker, "cp", directory.toAbsolutePath() + "/.", containerName + ":/workspace"),
+                COPY_TIMEOUT, "could not copy source code into the container");
     }
 
     @Override
     public ExecResult exec(String containerName, String command, Duration timeout, Consumer<String> onLine)
             throws IOException, InterruptedException {
-        return run(List.of(docker, "exec", containerName, "sh", "-c", command), timeout, onLine);
+        return Processes.run(List.of(docker, "exec", containerName, "sh", "-c", command), timeout, onLine);
     }
 
     @Override
     public void remove(String containerName) {
         try {
-            run(List.of(docker, "rm", "-f", containerName), Duration.ofSeconds(30), line -> { });
+            Processes.run(List.of(docker, "rm", "-f", containerName), Duration.ofSeconds(30), line -> { });
         } catch (IOException e) {
             log.warn("failed to remove container {}: {}", containerName, e.getMessage());
         } catch (InterruptedException e) {
@@ -74,31 +73,13 @@ public class DockerCliRuntime implements ContainerRuntime {
         }
     }
 
-    private ExecResult run(List<String> command, Duration timeout, Consumer<String> onLine)
+    private static void runOrThrow(List<String> command, Duration timeout, String error)
             throws IOException, InterruptedException {
-        Process process = new ProcessBuilder(command).redirectErrorStream(true).start();
-        Thread reader = Thread.ofVirtual().start(() -> {
-            try (BufferedReader in = new BufferedReader(
-                    new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8))) {
-                String line;
-                while ((line = in.readLine()) != null) {
-                    onLine.accept(line);
-                }
-            } catch (IOException ignored) {
-                // stream closes when the process is killed
-            }
-        });
-        try {
-            if (!process.waitFor(timeout.toMillis(), TimeUnit.MILLISECONDS)) {
-                process.destroyForcibly();
-                reader.join(1000);
-                return new ExecResult(-1, true);
-            }
-            reader.join(5000);
-            return new ExecResult(process.exitValue(), false);
-        } catch (InterruptedException e) {
-            process.destroyForcibly();
-            throw e;
+        List<String> output = new ArrayList<>();
+        ExecResult result = Processes.run(command, timeout, output::add);
+        if (result.timedOut() || result.exitCode() != 0) {
+            String tail = String.join(" ", output.subList(Math.max(0, output.size() - 5), output.size()));
+            throw new IOException(error + (result.timedOut() ? " (timed out)" : ": " + tail));
         }
     }
 }

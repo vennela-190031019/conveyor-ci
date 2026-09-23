@@ -11,12 +11,15 @@ import com.conveyorci.domain.PipelineRun;
 import com.conveyorci.domain.PipelineRunRepository;
 import com.conveyorci.domain.Project;
 import com.conveyorci.domain.ProjectRepository;
+import com.conveyorci.domain.Statuses.RunSource;
 import com.conveyorci.domain.Step;
 import com.conveyorci.engine.JobStore;
 import com.conveyorci.engine.JobStore.StepLog;
 import com.conveyorci.pipeline.JobDefinition;
 import com.conveyorci.pipeline.PipelineDefinition;
+import com.conveyorci.pipeline.PipelineDefinitionReader;
 import com.conveyorci.pipeline.PipelineParser;
+import com.conveyorci.pipeline.PipelineValidationException;
 import com.conveyorci.pipeline.StepDefinition;
 import com.conveyorci.web.ApiModels.RunResponse;
 import com.conveyorci.web.ApiModels.RunSummary;
@@ -41,19 +44,38 @@ public class RunService {
     /**
      * Validates the pipeline and persists a run with its full job/step graph in one transaction.
      * Jobs with no dependencies start QUEUED; everything else starts PENDING until the
-     * scheduler (Phase 2) promotes it.
+     * scheduler promotes it.
      */
     @Transactional
     public RunResponse trigger(Long projectId, TriggerRunRequest request) {
         // Parse before taking the lock: invalid pipelines should never block other triggers.
         PipelineDefinition definition = parser.parse(request.pipelineYaml());
+        return RunResponse.from(createRun(projectId, definition, request.commitSha(), request.branch(),
+                request.pipelineYaml(), RunSource.API, Boolean.TRUE.equals(request.checkout())));
+    }
 
-        Project project = projects.findByIdForUpdate(projectId)
-                .orElseThrow(() -> new NotFoundException("project " + projectId + " not found"));
-        int runNumber = runs.findMaxRunNumber(projectId) + 1;
+    /**
+     * Creates a run for a GitHub push. Unlike the API, an invalid pipeline file doesn't produce an
+     * error response (nobody is waiting for one): it produces a FAILED run with the validation errors,
+     * which is then reported on the commit like any other failure.
+     */
+    @Transactional
+    public PipelineRun triggerFromPush(Long projectId, String commitSha, String branch, String pipelineYaml) {
+        PipelineDefinition definition;
+        try {
+            definition = parser.parse(pipelineYaml);
+        } catch (PipelineValidationException e) {
+            PipelineRun run = newRun(projectId, PipelineDefinitionReader.DEFAULT_PIPELINE_NAME, commitSha,
+                    branch, pipelineYaml, RunSource.GITHUB_PUSH, true);
+            run.failBeforeStart("invalid pipeline: " + String.join("; ", e.getErrors()));
+            return runs.saveAndFlush(run);
+        }
+        return createRun(projectId, definition, commitSha, branch, pipelineYaml, RunSource.GITHUB_PUSH, true);
+    }
 
-        PipelineRun run = new PipelineRun(project, runNumber, definition.name(),
-                request.commitSha().toLowerCase(), request.branch().strip(), request.pipelineYaml());
+    private PipelineRun createRun(Long projectId, PipelineDefinition definition, String commitSha, String branch,
+                                  String pipelineYaml, RunSource source, boolean checkout) {
+        PipelineRun run = newRun(projectId, definition.name(), commitSha, branch, pipelineYaml, source, checkout);
 
         Map<String, Integer> stageByJob = definition.stageByJob();
         for (JobDefinition jobDef : definition.jobs()) {
@@ -65,9 +87,17 @@ public class RunService {
             }
             run.addJob(job);
         }
+        return runs.saveAndFlush(run);
+    }
 
-        PipelineRun saved = runs.saveAndFlush(run);
-        return RunResponse.from(saved);
+    /** Locks the project row so concurrent triggers get distinct, sequential run numbers. */
+    private PipelineRun newRun(Long projectId, String pipelineName, String commitSha, String branch,
+                               String pipelineYaml, RunSource source, boolean checkout) {
+        Project project = projects.findByIdForUpdate(projectId)
+                .orElseThrow(() -> new NotFoundException("project " + projectId + " not found"));
+        int runNumber = runs.findMaxRunNumber(projectId) + 1;
+        return new PipelineRun(project, runNumber, pipelineName, commitSha.toLowerCase(), branch.strip(),
+                pipelineYaml, source, checkout);
     }
 
     @Transactional(readOnly = true)

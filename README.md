@@ -3,12 +3,16 @@
 A self-hosted CI/CD platform: pipelines defined in YAML, jobs scheduled as a dependency DAG,
 executed in Docker containers by a pool of workers that recovers automatically from crashes.
 
-> **Status: Phase 2 of 6 complete.** Pipelines now run end to end.
-> Next up: GitHub webhooks and commit statuses (Phase 3).
+> **Status: Phase 3 of 6 complete.** Push to a connected GitHub repo and Conveyor checks out
+> the commit, runs its `.conveyor.yml`, and reports ✓/✗ on the commit. This repository builds
+> itself on Conveyor (see [`.conveyor.yml`](.conveyor.yml)).
+> Next up: live logs and a React dashboard (Phase 4).
 
 ## Architecture
 
 ```
+ GitHub push ──webhook (HMAC-signed)──┐                 ┌──► commit status ✓/✗ (outbox, retried)
+                                      ▼                 │
             ┌──────────────── API node ─────────────────┐
  HTTP ────► │ Controllers ─► Services ─► Postgres (JPA)  │
             │                                            │
@@ -19,7 +23,7 @@ executed in Docker containers by a pool of workers that recovers automatically f
                                                                            ▼
             ┌──────────────── Worker node (N of them) ───────────────────────┐
             │ claim job in Postgres (atomic UPDATE)                          │
-            │ docker run  ─► docker exec each step ─► docker rm              │
+            │ docker run ─► checkout commit (tarball) ─► docker exec steps   │
             │ heartbeat every lease/3 ─► extends lease; lost lease = kill    │
             └────────────────────────────────────────────────────────────────┘
 ```
@@ -54,6 +58,20 @@ PENDING ──deps succeeded──► QUEUED ──claimed──► RUNNING ─�
 | Clock skew between machines | Leases use the database clock (`now()`), never the worker's |
 
 ## Features by phase
+
+**Phase 3: GitHub integration**
+- `POST /api/webhooks/github` receives push events. Requests are verified with HMAC-SHA256
+  (`X-Hub-Signature-256`, constant-time compare) and it fails closed if no secret is set
+- Idempotent: GitHub's delivery id is recorded, so redeliveries never start a second run
+- Reads `.conveyor.yml` from the pushed commit; tag pushes, branch deletions, unregistered
+  repos and commits without a pipeline file are ignored (and recorded)
+- An invalid `.conveyor.yml` becomes a FAILED run with the validation errors, reported on the
+  commit, instead of silently doing nothing
+- Workers check out the exact commit: GitHub tarball → extract → `docker cp` into
+  `/workspace`. It works with any image, since it doesn't need git inside the container
+- Commit statuses via an **outbox**: each run stores the last state it reported; a reporter
+  sends pending → success/failure/error and retries with backoff if GitHub is down. HTTP calls
+  happen outside database transactions (rows are leased, like jobs)
 
 **Phase 2: execution engine**
 - Scheduler: promotes, skips, reaps and finalizes in one transaction, then pushes to Redis
@@ -113,6 +131,34 @@ scripts/watch.sh <run-id>                       # live job status
 curl -s localhost:8080/api/jobs/<job-id>/logs   # step output
 ```
 
+### Connect a GitHub repository
+
+Conveyor needs a public URL for GitHub to reach it. [ngrok](https://ngrok.com) works well
+because it forwards the request body byte-for-byte, which signature verification requires.
+
+```bash
+# 1. Expose the API
+ngrok http 8080                                   # note the https://….ngrok-free.app URL
+
+# 2. Start Conveyor with GitHub credentials (a classic token with `repo` scope)
+export GITHUB_TOKEN=ghp_...
+export GITHUB_WEBHOOK_SECRET=$(openssl rand -hex 20); echo $GITHUB_WEBHOOK_SECRET
+export CONVEYOR_PUBLIC_URL=https://<your-ngrok-url>
+mvn spring-boot:run
+
+# 3. Register the repository (owner and name as on GitHub)
+curl -s -X POST localhost:8080/api/projects -H 'Content-Type: application/json' \
+  -d '{"owner":"<github-user>","name":"<repo>"}'
+```
+
+4. On GitHub: **repo → Settings → Webhooks → Add webhook**
+   - Payload URL: `https://<your-ngrok-url>/api/webhooks/github`
+   - Content type: `application/json`
+   - Secret: the value of `GITHUB_WEBHOOK_SECRET`
+   - Events: *Just the push event*
+5. Add a `.conveyor.yml` to the repository and push. The run starts within a second, and the
+   commit shows a yellow dot, then ✓ or ✗.
+
 ### Demo: crash recovery
 
 Run the API without its built-in worker, plus two separate workers:
@@ -150,6 +196,10 @@ picks it up as attempt 2.
 | GET | `/api/jobs/{id}/logs` | Plain-text output of every step |
 | GET | `/api/workers` | Registered workers and liveness |
 | POST | `/api/pipelines/validate` | Dry-run validation (body: raw YAML) |
+| POST | `/api/webhooks/github` | GitHub webhook receiver (push, ping) |
+
+`POST /api/projects/{id}/runs` also accepts `"checkout": true` to run against the project's
+GitHub repository at `commitSha`.
 
 Errors use RFC 9457 `application/problem+json`: `400` for bad requests, `404` for missing
 resources, `409` for conflicts, and `422` for an invalid pipeline, with an `errors` array.
@@ -165,6 +215,10 @@ resources, `409` for conflicts, and `422` for an invalid pipeline, with an `erro
 | `conveyor.worker.lease-seconds` | `30` | Time until a silent worker's job is re-queued |
 | `conveyor.retry.base-delay-ms` / `max-delay-ms` | `2000` / `60000` | Retry backoff |
 | `conveyor.docker.memory` / `cpus` | `1g` / `1` | Per-job container limits |
+| `conveyor.github.token` (`GITHUB_TOKEN`) | empty | Needed for commit statuses and private repos |
+| `conveyor.github.webhook-secret` (`GITHUB_WEBHOOK_SECRET`) | empty | Webhooks are rejected until set |
+| `conveyor.github.pipeline-path` | `.conveyor.yml` | Pipeline file read from each commit |
+| `conveyor.public-url` (`CONVEYOR_PUBLIC_URL`) | `http://localhost:8080` | Base URL for "Details" links on GitHub |
 
 ## Design decisions
 
@@ -175,6 +229,11 @@ resources, `409` for conflicts, and `422` for an invalid pipeline, with an `erro
 - **Push to Redis after commit.** Avoids a worker popping an id whose row isn't visible yet.
 - **At-least-once execution.** A crashed job may run twice, so steps should be idempotent,
   the same contract as GitHub Actions and most CI systems.
+- **Outbox for commit statuses.** Reporting to GitHub is a side effect that can fail;
+  deriving "what should GitHub show" from run state and retrying until it matches is simpler
+  and more reliable than calling GitHub inline from the scheduler.
+- **Tarball checkout on the worker, not `git clone` in the job.** Works with images that don't
+  have git, and downloads one commit instead of the full history.
 - **Docker CLI over a Docker SDK.** Zero extra dependencies; works with Docker Desktop,
   Colima or a remote `DOCKER_HOST`.
 - **Collect all validation errors, strict unknown-key rejection, parse before locking.**
@@ -188,7 +247,7 @@ come in a later phase.
 
 1. ~~Core API, data model, YAML to DAG parser~~
 2. ~~Redis job queue, Docker workers, heartbeats and lease-based recovery, retries with backoff~~
-3. GitHub webhooks (HMAC-verified), repo checkout, commit statuses, OAuth login
-4. Live log streaming (Redis pub/sub to WebSockets) and a React dashboard
+3. ~~GitHub webhooks (HMAC-verified), repo checkout, commit statuses~~
+4. Live log streaming (Redis pub/sub to WebSockets), a React dashboard, GitHub OAuth login
 5. AWS deployment; the platform runs its own CI
 6. Load testing and published numbers (throughput, queue latency, recovery time)

@@ -15,4 +15,7 @@ public final class Statuses {
     public enum JobStatus { PENDING, QUEUED, RUNNING, SUCCEEDED, FAILED, CANCELLED, SKIPPED }
 
     public enum StepStatus { PENDING, RUNNING, SUCCEEDED, FAILED, SKIPPED }
+
+    /** How a run was started. */
+    public enum RunSource { API, GITHUB_PUSH }
 }

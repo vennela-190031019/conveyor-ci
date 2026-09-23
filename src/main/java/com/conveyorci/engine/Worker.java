@@ -1,5 +1,6 @@
 package com.conveyorci.engine;
 
+import java.io.IOException;
 import java.time.Duration;
 import java.util.Optional;
 import java.util.UUID;
@@ -47,6 +48,7 @@ public class Worker implements SmartLifecycle {
     private final JobQueue queue;
     private final JobStore store;
     private final ContainerRuntime runtime;
+    private final SourceFetcher sourceFetcher;
     private final String workerId;
     private final String hostname;
     private final int concurrency;
@@ -59,7 +61,7 @@ public class Worker implements SmartLifecycle {
     private ExecutorService loops;
     private ScheduledExecutorService timers;
 
-    public Worker(JobQueue queue, JobStore store, ContainerRuntime runtime,
+    public Worker(JobQueue queue, JobStore store, ContainerRuntime runtime, SourceFetcher sourceFetcher,
                   @Value("${conveyor.worker.id:}") String configuredId,
                   @Value("${conveyor.worker.concurrency:2}") int concurrency,
                   @Value("${conveyor.worker.lease-seconds:30}") int leaseSeconds,
@@ -68,6 +70,7 @@ public class Worker implements SmartLifecycle {
         this.queue = queue;
         this.store = store;
         this.runtime = runtime;
+        this.sourceFetcher = sourceFetcher;
         this.hostname = resolveHostname();
         this.workerId = configuredId == null || configuredId.isBlank()
                 ? hostname + "-" + UUID.randomUUID().toString().substring(0, 8)
@@ -180,6 +183,19 @@ public class Worker implements SmartLifecycle {
                     job.maxAttempts(), container, job.image());
             runtime.start(job.image(), container);
 
+            // Checkout output is shown at the top of the first step's log.
+            String checkoutLog = null;
+            if (job.checkout() != null) {
+                LogBuffer checkoutOutput = new LogBuffer(8 * 1024);
+                try {
+                    sourceFetcher.checkout(job.checkout(), runtime, container, checkoutOutput);
+                } catch (IOException | RuntimeException e) {
+                    throw new IOException("checkout of " + job.checkout().owner() + "/" + job.checkout().repo()
+                            + "@" + job.checkout().sha() + " failed: " + e.getMessage(), e);
+                }
+                checkoutLog = checkoutOutput.toString().stripTrailing();
+            }
+
             for (StepSpec step : job.steps()) {
                 Duration remaining = Duration.ofNanos(deadline - System.nanoTime());
                 if (remaining.isNegative() || remaining.isZero()) {
@@ -191,6 +207,10 @@ public class Worker implements SmartLifecycle {
                     break;
                 }
                 LogBuffer output = new LogBuffer(MAX_LOG_CHARS);
+                if (checkoutLog != null) {
+                    output.appendLine(checkoutLog);
+                    checkoutLog = null;
+                }
                 output.appendLine("$ " + step.command());
                 ExecResult result = runtime.exec(container, step.command(), remaining, output::appendLine);
                 if (ownershipLost.get()) {

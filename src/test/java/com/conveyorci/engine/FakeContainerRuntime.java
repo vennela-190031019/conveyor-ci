@@ -1,5 +1,8 @@
 package com.conveyorci.engine;
 
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
@@ -7,6 +10,7 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.Consumer;
+import java.util.stream.Stream;
 
 /**
  * In-memory stand-in for Docker so engine tests are fast and deterministic.
@@ -23,10 +27,21 @@ public class FakeContainerRuntime implements ContainerRuntime {
     private final Set<String> removed = ConcurrentHashMap.newKeySet();
     private final Map<String, Integer> flakyRuns = new ConcurrentHashMap<>();
     private final List<String> executed = new CopyOnWriteArrayList<>();
+    private final Map<String, List<String>> copiedFiles = new ConcurrentHashMap<>();
 
     @Override
     public void start(String image, String containerName) {
         removed.remove(containerName);
+    }
+
+    /** Records the relative paths of the files that would be copied into /workspace. */
+    @Override
+    public void copyInto(String containerName, Path directory) throws IOException {
+        try (Stream<Path> files = Files.walk(directory)) {
+            copiedFiles.put(containerName, files.filter(Files::isRegularFile)
+                    .map(f -> directory.relativize(f).toString().replace('\\', '/'))
+                    .sorted().toList());
+        }
     }
 
     @Override
@@ -63,6 +78,10 @@ public class FakeContainerRuntime implements ContainerRuntime {
 
     public boolean wasRemoved(String containerName) {
         return removed.contains(containerName);
+    }
+
+    public List<String> copiedFiles(String containerName) {
+        return copiedFiles.getOrDefault(containerName, List.of());
     }
 
     public List<String> executedCommands() {

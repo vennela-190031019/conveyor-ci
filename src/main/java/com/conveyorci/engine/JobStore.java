@@ -44,8 +44,13 @@ public class JobStore {
     public record StepSpec(long id, int position, String name, String command) {
     }
 
+    /** Repository to download into /workspace before the first step. */
+    public record Checkout(String owner, String repo, String sha) {
+    }
+
+    /** @param checkout null when the run doesn't check out code */
     public record ClaimedJob(long id, long runId, int attempt, int maxAttempts, String image,
-                             int timeoutMinutes, List<StepSpec> steps) {
+                             int timeoutMinutes, Checkout checkout, List<StepSpec> steps) {
     }
 
     public record StepLog(int position, String name, String status, Integer exitCode, String log) {
@@ -68,15 +73,23 @@ public class JobStore {
                 .addValue("lease", leaseSeconds);
 
         List<ClaimedJob> claimed = jdbc.query("""
-                UPDATE job
-                   SET status = 'RUNNING', worker_id = :worker, attempt = attempt + 1,
+                UPDATE job j
+                   SET status = 'RUNNING', worker_id = :worker, attempt = j.attempt + 1,
                        lease_expires_at = now() + (:lease * interval '1 second'),
                        started_at = now(), finished_at = NULL, failure_reason = NULL
-                 WHERE id = :job AND status = 'QUEUED' AND available_at <= now()
-                RETURNING id, run_id, attempt, max_attempts, image, timeout_minutes
+                  FROM pipeline_run r
+                  JOIN project p ON p.id = r.project_id
+                 WHERE r.id = j.run_id
+                   AND j.id = :job AND j.status = 'QUEUED' AND j.available_at <= now()
+                RETURNING j.id, j.run_id, j.attempt, j.max_attempts, j.image, j.timeout_minutes,
+                          r.checkout, r.commit_sha, p.owner, p.name
                 """, params, (rs, i) -> new ClaimedJob(rs.getLong("id"), rs.getLong("run_id"),
                 rs.getInt("attempt"), rs.getInt("max_attempts"), rs.getString("image"),
-                rs.getInt("timeout_minutes"), List.of()));
+                rs.getInt("timeout_minutes"),
+                rs.getBoolean("checkout")
+                        ? new Checkout(rs.getString("owner"), rs.getString("name"), rs.getString("commit_sha"))
+                        : null,
+                List.of()));
         if (claimed.isEmpty()) {
             return Optional.empty();
         }
@@ -99,7 +112,7 @@ public class JobStore {
                         rs.getString("name"), rs.getString("command")));
 
         return Optional.of(new ClaimedJob(job.id(), job.runId(), job.attempt(), job.maxAttempts(),
-                job.image(), job.timeoutMinutes(), steps));
+                job.image(), job.timeoutMinutes(), job.checkout(), steps));
     }
 
     /** Extends the lease. Returns false if the caller no longer owns the job (lease lost or run cancelled). */

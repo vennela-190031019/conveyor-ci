@@ -1,6 +1,7 @@
 package com.conveyorci.engine;
 
 import java.io.IOException;
+import java.nio.file.Path;
 import java.time.Duration;
 import java.util.function.Consumer;
 
@@ -10,8 +11,11 @@ import java.util.function.Consumer;
  */
 public interface ContainerRuntime {
 
-    /** Starts a long-lived container for the job. Pulls the image if needed. */
+    /** Starts a long-lived container for the job, with /workspace as the working directory. Pulls the image if needed. */
     void start(String image, String containerName) throws IOException, InterruptedException;
+
+    /** Copies the contents of a local directory into the container's /workspace. */
+    void copyInto(String containerName, Path directory) throws IOException, InterruptedException;
 
     /** Runs a shell command in the container, streaming each output line to {@code onLine}. */
     ExecResult exec(String containerName, String command, Duration timeout, Consumer<String> onLine)

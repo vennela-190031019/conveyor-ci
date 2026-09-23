@@ -4,6 +4,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 
+import com.conveyorci.domain.Statuses.RunSource;
 import com.conveyorci.domain.Statuses.RunStatus;
 
 import jakarta.persistence.CascadeType;
@@ -63,6 +64,17 @@ public class PipelineRun {
     @Column(name = "finished_at")
     private Instant finishedAt;
 
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false, length = 20)
+    private RunSource source;
+
+    /** Whether workers download the repository at {@code commitSha} into /workspace before step 1. */
+    @Column(nullable = false)
+    private boolean checkout;
+
+    @Column(name = "failure_reason", length = 500)
+    private String failureReason;
+
     @OneToMany(mappedBy = "run", cascade = CascadeType.ALL, orphanRemoval = true)
     @OrderBy("stage ASC, id ASC")
     private List<Job> jobs = new ArrayList<>();
@@ -71,15 +83,25 @@ public class PipelineRun {
     }
 
     public PipelineRun(Project project, int runNumber, String pipelineName, String commitSha,
-                       String branch, String definitionYaml) {
+                       String branch, String definitionYaml, RunSource source, boolean checkout) {
         this.project = project;
         this.runNumber = runNumber;
         this.pipelineName = pipelineName;
         this.commitSha = commitSha;
         this.branch = branch;
         this.definitionYaml = definitionYaml;
+        this.source = source;
+        this.checkout = checkout;
         this.status = RunStatus.QUEUED;
         this.createdAt = Instant.now();
+    }
+
+    /** A run that failed before any job could start, e.g. because its pipeline file is invalid. */
+    public void failBeforeStart(String reason) {
+        this.status = RunStatus.FAILED;
+        this.failureReason = reason.length() > 500 ? reason.substring(0, 497) + "..." : reason;
+        this.startedAt = this.createdAt;
+        this.finishedAt = Instant.now();
     }
 
     public void addJob(Job job) {
@@ -99,4 +121,7 @@ public class PipelineRun {
     public Instant getStartedAt() { return startedAt; }
     public Instant getFinishedAt() { return finishedAt; }
     public List<Job> getJobs() { return jobs; }
+    public RunSource getSource() { return source; }
+    public boolean isCheckout() { return checkout; }
+    public String getFailureReason() { return failureReason; }
 }

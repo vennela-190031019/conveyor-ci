@@ -43,3 +43,11 @@ conveyor:
   docker:
     memory: 1g               # per-job container limits
     cpus: 1
+  public-url: ${CONVEYOR_PUBLIC_URL:http://localhost:8080}   # used in commit status links
+  github:
+    api-url: https://api.github.com
+    token: ${GITHUB_TOKEN:}                   # needed for commit statuses and private repos
+    webhook-secret: ${GITHUB_WEBHOOK_SECRET:} # webhooks are rejected until this is set
+    pipeline-path: .conveyor.yml              # pipeline file read from each pushed commit
+    status-interval-ms: 2000
+    status-retry-base-ms: 2000
