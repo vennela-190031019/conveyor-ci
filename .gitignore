@@ -4,3 +4,7 @@ target/
 .vscode/
 .DS_Store
 .env
+
+# Built dashboard (run `npm run build` in ui/)
+src/main/resources/static/
+ui/node_modules/

@@ -7,6 +7,7 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.function.Consumer;
 import java.util.stream.Stream;
 
 import org.springframework.stereotype.Component;
@@ -33,11 +34,11 @@ public class SourceFetcher {
         this.github = github;
     }
 
-    public void checkout(Checkout source, ContainerRuntime runtime, String containerName, LogBuffer log)
+    public void checkout(Checkout source, ContainerRuntime runtime, String containerName, Consumer<String> log)
             throws IOException, InterruptedException {
         Path temp = Files.createTempDirectory("conveyor-src-");
         try {
-            log.appendLine("$ checkout " + source.owner() + "/" + source.repo() + "@" + source.sha());
+            log.accept("$ checkout " + source.owner() + "/" + source.repo() + "@" + source.sha());
             Path archive = temp.resolve("source.tar.gz");
             github.downloadTarball(source.owner(), source.repo(), source.sha(), archive);
 
@@ -52,7 +53,7 @@ public class SourceFetcher {
 
             runtime.copyInto(containerName, tree);
             try (Stream<Path> files = Files.list(tree)) {
-                log.appendLine("checked out " + files.count() + " top-level entries into /workspace");
+                log.accept("checked out " + files.count() + " top-level entries into /workspace");
             }
         } finally {
             deleteRecursively(temp);

@@ -74,13 +74,15 @@ public final class ApiModels {
         }
     }
 
-    public record RunResponse(Long id, Long projectId, int runNumber, String pipelineName, String commitSha,
+    public record RunResponse(Long id, Long projectId, String project, int runNumber, String pipelineName,
+                              String commitSha,
                               String branch, RunStatus status, RunSource source, boolean checkout,
                               String failureReason, Instant createdAt, Instant startedAt,
                               Instant finishedAt, List<List<String>> stages, List<JobResponse> jobs) {
         public static RunResponse from(PipelineRun r) {
             List<JobResponse> jobs = r.getJobs().stream().map(JobResponse::from).toList();
-            return new RunResponse(r.getId(), r.getProject().getId(), r.getRunNumber(), r.getPipelineName(),
+            return new RunResponse(r.getId(), r.getProject().getId(),
+                    r.getProject().getOwner() + "/" + r.getProject().getName(), r.getRunNumber(), r.getPipelineName(),
                     r.getCommitSha(), r.getBranch(), r.getStatus(), r.getSource(), r.isCheckout(),
                     r.getFailureReason(), r.getCreatedAt(), r.getStartedAt(), r.getFinishedAt(),
                     stagesOf(jobs), jobs);
@@ -98,11 +100,14 @@ public final class ApiModels {
         }
     }
 
-    public record RunSummary(Long id, int runNumber, String pipelineName, String commitSha, String branch,
-                             RunStatus status, RunSource source, Instant createdAt, Instant finishedAt) {
+    public record RunSummary(Long id, Long projectId, String project, int runNumber, String pipelineName,
+                             String commitSha, String branch, RunStatus status, RunSource source,
+                             Instant createdAt, Instant startedAt, Instant finishedAt) {
         public static RunSummary from(PipelineRun r) {
-            return new RunSummary(r.getId(), r.getRunNumber(), r.getPipelineName(), r.getCommitSha(),
-                    r.getBranch(), r.getStatus(), r.getSource(), r.getCreatedAt(), r.getFinishedAt());
+            Project p = r.getProject();
+            return new RunSummary(r.getId(), p.getId(), p.getOwner() + "/" + p.getName(), r.getRunNumber(),
+                    r.getPipelineName(), r.getCommitSha(), r.getBranch(), r.getStatus(), r.getSource(),
+                    r.getCreatedAt(), r.getStartedAt(), r.getFinishedAt());
         }
     }
 

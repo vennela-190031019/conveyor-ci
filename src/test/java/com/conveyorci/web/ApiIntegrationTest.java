@@ -113,6 +113,31 @@ class ApiIntegrationTest {
     }
 
     @Test
+    void rerunStartsANewRunFromTheSameSnapshotAndRecentListsIt() throws Exception {
+        long projectId = createProject();
+        String created = mvc.perform(post("/api/projects/{id}/runs", projectId)
+                        .contentType(MediaType.APPLICATION_JSON).content(runBody(PIPELINE)))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        long firstId = json.readTree(created).get("id").asLong();
+
+        String rerun = mvc.perform(post("/api/runs/{id}/rerun", firstId))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.runNumber").value(2))
+                .andExpect(jsonPath("$.commitSha").value("a1b2c3d4e5f6"))
+                .andExpect(jsonPath("$.stages[1]", contains("test")))
+                .andExpect(jsonPath("$.project", startsWith("vennela/app-")))
+                .andReturn().getResponse().getContentAsString();
+        long rerunId = json.readTree(rerun).get("id").asLong();
+
+        mvc.perform(get("/api/runs"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[*].id", hasItem((int) rerunId)))
+                .andExpect(jsonPath("$[0].project").exists());
+        mvc.perform(post("/api/runs/{id}/rerun", 999_999)).andExpect(status().isNotFound());
+    }
+
+    @Test
     void concurrentTriggersGetUniqueSequentialRunNumbers() throws Exception {
         long projectId = createProject();
         int threads = 8;

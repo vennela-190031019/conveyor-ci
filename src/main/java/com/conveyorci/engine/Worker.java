@@ -24,6 +24,8 @@ import com.conveyorci.domain.Statuses.StepStatus;
 import com.conveyorci.engine.ContainerRuntime.ExecResult;
 import com.conveyorci.engine.JobStore.ClaimedJob;
 import com.conveyorci.engine.JobStore.StepSpec;
+import com.conveyorci.logs.LiveLogPublisher;
+import com.conveyorci.logs.LiveLogPublisher.JobLog;
 
 /**
  * Pulls job ids from Redis, claims them in Postgres, and runs each job's steps in a container.
@@ -49,6 +51,7 @@ public class Worker implements SmartLifecycle {
     private final JobStore store;
     private final ContainerRuntime runtime;
     private final SourceFetcher sourceFetcher;
+    private final LiveLogPublisher liveLogs;
     private final String workerId;
     private final String hostname;
     private final int concurrency;
@@ -62,6 +65,7 @@ public class Worker implements SmartLifecycle {
     private ScheduledExecutorService timers;
 
     public Worker(JobQueue queue, JobStore store, ContainerRuntime runtime, SourceFetcher sourceFetcher,
+                  LiveLogPublisher liveLogs,
                   @Value("${conveyor.worker.id:}") String configuredId,
                   @Value("${conveyor.worker.concurrency:2}") int concurrency,
                   @Value("${conveyor.worker.lease-seconds:30}") int leaseSeconds,
@@ -71,6 +75,7 @@ public class Worker implements SmartLifecycle {
         this.store = store;
         this.runtime = runtime;
         this.sourceFetcher = sourceFetcher;
+        this.liveLogs = liveLogs;
         this.hostname = resolveHostname();
         this.workerId = configuredId == null || configuredId.isBlank()
                 ? hostname + "-" + UUID.randomUUID().toString().substring(0, 8)
@@ -178,6 +183,8 @@ public class Worker implements SmartLifecycle {
 
         long deadline = System.nanoTime() + TimeUnit.MINUTES.toNanos(job.timeoutMinutes());
         String failure = null;
+        JobLog live = liveLogs.open(job.id(), job.attempt());
+        String finalStatus = null;
         try {
             log.info("job {} attempt {}/{}: starting {} on image {}", job.id(), job.attempt(),
                     job.maxAttempts(), container, job.image());
@@ -188,7 +195,10 @@ public class Worker implements SmartLifecycle {
             if (job.checkout() != null) {
                 LogBuffer checkoutOutput = new LogBuffer(8 * 1024);
                 try {
-                    sourceFetcher.checkout(job.checkout(), runtime, container, checkoutOutput);
+                    sourceFetcher.checkout(job.checkout(), runtime, container, line -> {
+                        checkoutOutput.appendLine(line);
+                        live.append(0, line);
+                    });
                 } catch (IOException | RuntimeException e) {
                     throw new IOException("checkout of " + job.checkout().owner() + "/" + job.checkout().repo()
                             + "@" + job.checkout().sha() + " failed: " + e.getMessage(), e);
@@ -212,7 +222,11 @@ public class Worker implements SmartLifecycle {
                     checkoutLog = null;
                 }
                 output.appendLine("$ " + step.command());
-                ExecResult result = runtime.exec(container, step.command(), remaining, output::appendLine);
+                live.append(step.position(), "$ " + step.command());
+                ExecResult result = runtime.exec(container, step.command(), remaining, line -> {
+                    output.appendLine(line);
+                    live.append(step.position(), line);
+                });
                 if (ownershipLost.get()) {
                     break;
                 }
@@ -233,6 +247,7 @@ public class Worker implements SmartLifecycle {
             }
         } catch (InterruptedException e) {
             // Shutting down: don't report anything. The lease expires and another worker retries.
+            live.close(null);
             throw e;
         } catch (Exception e) {
             failure = "could not run job: " + e.getMessage();
@@ -242,18 +257,31 @@ public class Worker implements SmartLifecycle {
         }
 
         if (ownershipLost.get()) {
+            live.close(null);
             return;
         }
+        // Make every line visible before the job's status flips, so a viewer never sees
+        // "finished" with output still missing.
+        if (failure != null) {
+            live.append(-1, "attempt " + job.attempt() + " failed: " + failure);
+        }
+        live.flushNow();
         if (failure == null) {
-            store.completeSuccess(job.id(), workerId, job.attempt());
+            if (store.completeSuccess(job.id(), workerId, job.attempt())) {
+                finalStatus = "SUCCEEDED";
+            }
             log.info("job {} succeeded on attempt {}", job.id(), job.attempt());
         } else {
             long backoff = Backoff.delayMillis(job.attempt(), retryBaseMillis, retryMaxMillis, RETRY_JITTER,
                     () -> ThreadLocalRandom.current().nextDouble());
             Optional<String> next = store.completeFailure(job.id(), workerId, job.attempt(), failure, backoff);
+            if (next.filter("FAILED"::equals).isPresent()) {
+                finalStatus = "FAILED";
+            }
             log.info("job {} attempt {} failed ({}); job is now {}", job.id(), job.attempt(), failure,
                     next.orElse("owned by someone else"));
         }
+        live.close(finalStatus);
     }
 
     private void registerSelf() {

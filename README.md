@@ -3,10 +3,13 @@
 A self-hosted CI/CD platform: pipelines defined in YAML, jobs scheduled as a dependency DAG,
 executed in Docker containers by a pool of workers that recovers automatically from crashes.
 
-> **Status: Phase 3 of 6 complete.** Push to a connected GitHub repo and Conveyor checks out
-> the commit, runs its `.conveyor.yml`, and reports ✓/✗ on the commit. This repository builds
-> itself on Conveyor (see [`.conveyor.yml`](.conveyor.yml)).
-> Next up: live logs and a React dashboard (Phase 4).
+> **Status: Phase 4 of 6 complete.** Push to a connected GitHub repo and Conveyor checks out
+> the commit, runs its `.conveyor.yml` across a pool of workers, streams the logs live to a
+> React dashboard, and reports ✓/✗ on the commit. This repository builds itself on Conveyor
+> (see [`.conveyor.yml`](.conveyor.yml)).
+> Next up: AWS deployment and authentication (Phase 5).
+
+![Run page: pipeline graph and live logs](docs/dashboard-run.png)
 
 ## Architecture
 
@@ -58,6 +61,19 @@ PENDING ──deps succeeded──► QUEUED ──claimed──► RUNNING ─�
 | Clock skew between machines | Leases use the database clock (`now()`), never the worker's |
 
 ## Features by phase
+
+**Phase 4: dashboard and live logs**
+- React + TypeScript dashboard (Vite, no UI framework): recent runs with pass rate and worker
+  capacity, a run page with the pipeline **DAG** (edges light up as dependencies pass), per-job
+  logs, **cancel** and **re-run**, projects, and worker health
+- **Live logs over Server-Sent Events.** Workers batch output lines every 200 ms into a capped
+  Redis list (for late joiners) plus one pub/sub message (for current viewers). Every API node
+  subscribes, so a browser can connect to any node
+- **Gap-free, duplicate-free joining mid-run.** A viewer is registered before the snapshot is
+  read; live events queue until the snapshot is sent, then are merged by per-attempt sequence
+  number. A retry sends a `reset`, and stragglers from an old attempt are dropped
+- Workers flush logs *before* recording a job's final status, so "finished" never shows up with
+  output still missing; live logs are best-effort, and Postgres keeps the full per-step output
 
 **Phase 3: GitHub integration**
 - `POST /api/webhooks/github` receives push events. Requests are verified with HMAC-SHA256
@@ -131,6 +147,16 @@ scripts/watch.sh <run-id>                       # live job status
 curl -s localhost:8080/api/jobs/<job-id>/logs   # step output
 ```
 
+### Dashboard
+
+```bash
+cd ui && npm install && npm run build   # builds into the API's static files
+open http://localhost:8080              # served by Conveyor itself (also via your ngrok URL)
+```
+
+For UI development with hot reload, run `npm run dev` in `ui/` and open http://localhost:5173
+(API calls are proxied to :8080).
+
 ### Connect a GitHub repository
 
 Conveyor needs a public URL for GitHub to reach it. [ngrok](https://ngrok.com) works well
@@ -191,9 +217,12 @@ picks it up as attempt 2.
 | GET | `/api/projects/{id}` | Get a project |
 | POST | `/api/projects/{id}/runs` | Trigger a run `{commitSha, branch, pipelineYaml}` |
 | GET | `/api/projects/{id}/runs` | Latest 50 runs, newest first |
+| GET | `/api/runs` | Latest 50 runs across all projects |
 | GET | `/api/runs/{id}` | Run with stages, jobs (status, attempt, worker, failure reason) and steps |
+| POST | `/api/runs/{id}/rerun` | Start a new run from the same pipeline snapshot and commit |
 | POST | `/api/runs/{id}/cancel` | Cancel a queued or running run |
 | GET | `/api/jobs/{id}/logs` | Plain-text output of every step |
+| GET | `/api/jobs/{id}/logs/stream` | Live output as Server-Sent Events (`lines`, `reset`, `end`) |
 | GET | `/api/workers` | Registered workers and liveness |
 | POST | `/api/pipelines/validate` | Dry-run validation (body: raw YAML) |
 | POST | `/api/webhooks/github` | GitHub webhook receiver (push, ping) |
@@ -229,6 +258,10 @@ resources, `409` for conflicts, and `422` for an invalid pipeline, with an `erro
 - **Push to Redis after commit.** Avoids a worker popping an id whose row isn't visible yet.
 - **At-least-once execution.** A crashed job may run twice, so steps should be idempotent,
   the same contract as GitHub Actions and most CI systems.
+- **Server-Sent Events over WebSockets for logs.** The flow is one-way; SSE is plain HTTP, so
+  it passes through proxies like ngrok, and browsers reconnect on their own.
+- **Snapshot + live, merged by sequence number.** Subscribing before reading the snapshot
+  closes the race where lines printed in between would be lost.
 - **Outbox for commit statuses.** Reporting to GitHub is a side effect that can fail;
   deriving "what should GitHub show" from run state and retrying until it matches is simpler
   and more reliable than calling GitHub inline from the scheduler.
@@ -239,7 +272,9 @@ resources, `409` for conflicts, and `422` for an invalid pipeline, with an `erro
 - **Collect all validation errors, strict unknown-key rejection, parse before locking.**
   (Phase 1.)
 
-**Known limitations:** a worker killed with `kill -9` leaves its job container running
+**Known limitations:** the API has no authentication yet, so anyone who can reach it (e.g. via a
+public ngrok URL) can cancel or re-run builds; GitHub OAuth login comes with the deployment in
+Phase 5. Also, a worker killed with `kill -9` leaves its job container running
 (label `conveyor.managed=true`); a janitor is planned. Jobs don't share files yet; artifacts
 come in a later phase.
 
@@ -248,6 +283,6 @@ come in a later phase.
 1. ~~Core API, data model, YAML to DAG parser~~
 2. ~~Redis job queue, Docker workers, heartbeats and lease-based recovery, retries with backoff~~
 3. ~~GitHub webhooks (HMAC-verified), repo checkout, commit statuses~~
-4. Live log streaming (Redis pub/sub to WebSockets), a React dashboard, GitHub OAuth login
-5. AWS deployment; the platform runs its own CI
+4. ~~Live log streaming (Redis pub/sub → Server-Sent Events) and a React dashboard~~
+5. AWS deployment with GitHub OAuth login; the platform runs its own CI
 6. Load testing and published numbers (throughput, queue latency, recovery time)

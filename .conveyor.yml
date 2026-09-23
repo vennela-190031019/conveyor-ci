@@ -8,10 +8,19 @@ jobs:
     timeout_minutes: 20
     steps:
       - name: Compile and package
-        run: mvn -B -q -DskipTests package
+        run: mvn -B -DskipTests package
       - name: Unit tests
         # Integration tests need Docker (Testcontainers), which isn't available inside a job container.
-        run: mvn -B -q test -Dtest='PipelineParserTest,BackoffTest,LogBufferTest,WebhookSignatureVerifierTest' -Dsurefire.failIfNoSpecifiedTests=false
+        run: mvn -B test -Dtest='PipelineParserTest,BackoffTest,LogBufferTest,WebhookSignatureVerifierTest' -Dsurefire.failIfNoSpecifiedTests=false
+
+  dashboard:
+    image: node:22-slim
+    timeout_minutes: 10
+    steps:
+      - name: Install
+        run: cd ui && npm ci --no-audit --no-fund
+      - name: Typecheck and build
+        run: cd ui && npm run build
 
   repo-checks:
     image: alpine:3.20

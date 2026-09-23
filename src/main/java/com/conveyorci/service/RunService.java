@@ -115,6 +115,24 @@ public class RunService {
                 .map(RunSummary::from).toList();
     }
 
+    @Transactional(readOnly = true)
+    public List<RunSummary> recent() {
+        return runs.findTop50ByOrderByIdDesc().stream().map(RunSummary::from).toList();
+    }
+
+    /**
+     * Starts a new run from an existing one's pipeline snapshot, commit and settings. A re-run of a
+     * GitHub push keeps its source, so the commit's status on GitHub is updated again.
+     */
+    @Transactional
+    public RunResponse rerun(Long runId) {
+        PipelineRun original = runs.findById(runId)
+                .orElseThrow(() -> new NotFoundException("run " + runId + " not found"));
+        PipelineDefinition definition = parser.parse(original.getDefinitionYaml());
+        return RunResponse.from(createRun(original.getProject().getId(), definition, original.getCommitSha(),
+                original.getBranch(), original.getDefinitionYaml(), original.getSource(), original.isCheckout()));
+    }
+
     /** Cancels a queued or running run. Running jobs are stopped at their worker's next heartbeat. */
     @Transactional
     public RunResponse cancel(Long runId) {

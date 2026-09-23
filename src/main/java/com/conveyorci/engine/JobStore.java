@@ -209,6 +209,12 @@ public class JobStore {
         return true;
     }
 
+    public Optional<String> jobStatus(long jobId) {
+        List<String> status = jdbc.queryForList("SELECT status FROM job WHERE id = :job",
+                Map.of("job", jobId), String.class);
+        return status.stream().findFirst();
+    }
+
     public Optional<List<StepLog>> logs(long jobId) {
         Integer jobs = jdbc.queryForObject("SELECT count(*) FROM job WHERE id = :job",
                 Map.of("job", jobId), Integer.class);

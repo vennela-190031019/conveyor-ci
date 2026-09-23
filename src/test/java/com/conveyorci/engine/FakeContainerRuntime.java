@@ -19,6 +19,7 @@ import java.util.stream.Stream;
  *   <li>{@code exit N}: fails with exit code N</li>
  *   <li>{@code flaky-<id>}: fails the first time it runs, succeeds after that</li>
  *   <li>{@code hang}: blocks until its container is removed (used to test cancellation)</li>
+ *   <li>{@code lines N}: prints N lines at once; {@code tick N}: prints N lines 40 ms apart</li>
  *   <li>anything else: prints the command and succeeds</li>
  * </ul>
  */
@@ -56,6 +57,21 @@ public class FakeContainerRuntime implements ContainerRuntime {
             int runs = flakyRuns.merge(command, 1, Integer::sum);
             onLine.accept("flaky run #" + runs);
             return new ExecResult(runs == 1 ? 1 : 0, false);
+        }
+        if (command.startsWith("lines ")) {
+            int count = Integer.parseInt(command.substring(6).trim());
+            for (int i = 1; i <= count; i++) {
+                onLine.accept("line " + i);
+            }
+            return new ExecResult(0, false);
+        }
+        if (command.startsWith("tick ")) {
+            int count = Integer.parseInt(command.substring(5).trim());
+            for (int i = 1; i <= count; i++) {
+                onLine.accept("tick " + i);
+                Thread.sleep(40);
+            }
+            return new ExecResult(0, false);
         }
         if (command.equals("hang")) {
             long deadline = System.nanoTime() + timeout.toNanos();
