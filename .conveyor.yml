@@ -11,7 +11,7 @@ jobs:
         run: mvn -B -DskipTests package
       - name: Unit tests
         # Integration tests need Docker (Testcontainers), which isn't available inside a job container.
-        run: mvn -B test -Dtest='PipelineParserTest,BackoffTest,LogBufferTest,WebhookSignatureVerifierTest' -Dsurefire.failIfNoSpecifiedTests=false
+        run: mvn -B test -Dtest='PipelineParserTest,BackoffTest,LogBufferTest,WebhookSignatureVerifierTest,SimulatedRuntimeTest' -Dsurefire.failIfNoSpecifiedTests=false
 
   dashboard:
     image: node:22-slim

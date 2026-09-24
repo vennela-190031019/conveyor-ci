@@ -14,7 +14,7 @@ services:
       interval: 5s
       retries: 10
 
-  # Not used until Phase 2 (job queue + worker heartbeats). Included now so the dev stack is stable.
+  # Job dispatch, scheduler wake-ups and live log streaming.
   redis:
     image: redis:7-alpine
     ports:

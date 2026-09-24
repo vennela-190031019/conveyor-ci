@@ -31,8 +31,9 @@ management:
 conveyor:
   scheduler:
     enabled: true            # set false on worker-only nodes
-    interval-ms: 1000        # how often the scheduler promotes, reaps and dispatches
+    interval-ms: 1000        # safety-net pass: reaps leases, ends retry backoffs, recovers lost wake-ups
     redispatch-seconds: 30   # re-push QUEUED jobs nobody claimed (covers lost Redis messages)
+    wake-on-events: true     # run a pass as soon as a run is created or a job finishes
   worker:
     enabled: true            # set false on API-only nodes
     concurrency: 2           # jobs this process runs at once
@@ -40,6 +41,7 @@ conveyor:
   retry:
     base-delay-ms: 2000      # backoff = base * 2^(attempt-1), +/-20% jitter
     max-delay-ms: 60000
+  runtime: docker            # docker, or simulated (load tests only: nothing is executed)
   docker:
     memory: 1g               # per-job container limits
     cpus: 1

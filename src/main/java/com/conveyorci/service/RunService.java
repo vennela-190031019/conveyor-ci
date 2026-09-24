@@ -15,6 +15,7 @@ import com.conveyorci.domain.Statuses.RunSource;
 import com.conveyorci.domain.Step;
 import com.conveyorci.engine.JobStore;
 import com.conveyorci.engine.JobStore.StepLog;
+import com.conveyorci.engine.SchedulerWakeup;
 import com.conveyorci.pipeline.JobDefinition;
 import com.conveyorci.pipeline.PipelineDefinition;
 import com.conveyorci.pipeline.PipelineDefinitionReader;
@@ -32,13 +33,15 @@ public class RunService {
     private final PipelineRunRepository runs;
     private final PipelineParser parser;
     private final JobStore jobStore;
+    private final SchedulerWakeup wakeup;
 
     public RunService(ProjectRepository projects, PipelineRunRepository runs, PipelineParser parser,
-                      JobStore jobStore) {
+                      JobStore jobStore, SchedulerWakeup wakeup) {
         this.projects = projects;
         this.runs = runs;
         this.parser = parser;
         this.jobStore = jobStore;
+        this.wakeup = wakeup;
     }
 
     /**
@@ -87,7 +90,9 @@ public class RunService {
             }
             run.addJob(job);
         }
-        return runs.saveAndFlush(run);
+        PipelineRun saved = runs.saveAndFlush(run);
+        wakeup.wake(); // sent after commit: dispatch the first jobs now, not at the next scheduler pass
+        return saved;
     }
 
     /** Locks the project row so concurrent triggers get distinct, sequential run numbers. */
@@ -142,6 +147,7 @@ public class RunService {
         if (!jobStore.cancelRun(runId)) {
             throw new ConflictException("run " + runId + " has already finished");
         }
+        wakeup.wake(); // lets the scheduler mark the run finished right away
         return get(runId);
     }
 

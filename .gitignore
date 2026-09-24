@@ -8,3 +8,6 @@ target/
 # Built dashboard (run `npm run build` in ui/)
 src/main/resources/static/
 ui/node_modules/
+
+# Load test process logs (results.md / results.json are committed)
+bench/logs/

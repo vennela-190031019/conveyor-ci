@@ -10,14 +10,17 @@ import java.util.function.Consumer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
 /**
  * {@link ContainerRuntime} backed by the Docker CLI. Using the CLI rather than a Docker SDK
  * keeps the worker dependency-free and works with any engine the CLI can reach
- * (Docker Desktop, Colima, remote DOCKER_HOST).
+ * (Docker Desktop, Colima, remote DOCKER_HOST). This is the default runtime
+ * ({@code conveyor.runtime=docker}); see {@link SimulatedRuntime} for load testing.
  */
 @Component
+@ConditionalOnProperty(name = "conveyor.runtime", havingValue = "docker", matchIfMissing = true)
 public class DockerCliRuntime implements ContainerRuntime {
 
     private static final Logger log = LoggerFactory.getLogger(DockerCliRuntime.class);

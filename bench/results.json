@@ -1,0 +1,117 @@
+{
+  "date": "2026-09-23",
+  "machine": {
+    "os": "macOS-14.0-arm64-arm-64bit-Mach-O",
+    "cpus": 8,
+    "python": "3.13.5",
+    "cpu": "Apple M1",
+    "memory_gb": 8,
+    "java": "openjdk version \"21.0.12.1\" 2026-08-18 LTS"
+  },
+  "scaling": [
+    {
+      "workers": 1,
+      "slots": 8,
+      "jobs": 256,
+      "job_seconds": 1,
+      "makespan_s": 33.27,
+      "jobs_per_min": 462,
+      "ideal_s": 32.0,
+      "efficiency_pct": 96.2
+    },
+    {
+      "workers": 2,
+      "slots": 16,
+      "jobs": 256,
+      "job_seconds": 1,
+      "makespan_s": 17.79,
+      "jobs_per_min": 863,
+      "ideal_s": 16.0,
+      "efficiency_pct": 89.9
+    },
+    {
+      "workers": 4,
+      "slots": 32,
+      "jobs": 256,
+      "job_seconds": 1,
+      "makespan_s": 9.48,
+      "jobs_per_min": 1620,
+      "ideal_s": 8.0,
+      "efficiency_pct": 84.4
+    }
+  ],
+  "chain_interval": {
+    "runs": 24,
+    "jobs_per_run": 5,
+    "hop_ms": {
+      "n": 96,
+      "p50": 624.2,
+      "p95": 1078.9,
+      "p99": 1132.3,
+      "max": 1132.3
+    },
+    "first_job_ms": {
+      "n": 24,
+      "p50": 2711.6,
+      "p95": 3156.1,
+      "p99": 3913.5,
+      "max": 3913.5
+    },
+    "run_e2e_ms": {
+      "n": 24,
+      "p50": 8014.8,
+      "p95": 9193.2,
+      "p99": 9200.4,
+      "max": 9200.4
+    }
+  },
+  "chain_wake": {
+    "runs": 24,
+    "jobs_per_run": 5,
+    "hop_ms": {
+      "n": 96,
+      "p50": 80.8,
+      "p95": 187.5,
+      "p99": 262.1,
+      "max": 262.1
+    },
+    "first_job_ms": {
+      "n": 24,
+      "p50": 968.2,
+      "p95": 1217.4,
+      "p99": 1230.1,
+      "max": 1230.1
+    },
+    "run_e2e_ms": {
+      "n": 24,
+      "p50": 1781.4,
+      "p95": 2199.8,
+      "p99": 2204.1,
+      "max": 2204.1
+    }
+  },
+  "burst": {
+    "runs": 500,
+    "clients": 16,
+    "submit_s": 5.32,
+    "requests_per_s": 94,
+    "api_latency_ms": {
+      "n": 500,
+      "p50": 159.6,
+      "p95": 248.5,
+      "p99": 325.7,
+      "max": 416.5
+    },
+    "all_done_s": 5.92
+  },
+  "crash": {
+    "runs": 8,
+    "jobs": 32,
+    "jobs_held_by_killed_worker": 8,
+    "jobs_recovered": 8,
+    "runs_succeeded": 8,
+    "lease_seconds": 10,
+    "detect_s_max": 7.6,
+    "detect_s_p50": 7.5
+  }
+}

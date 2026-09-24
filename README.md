@@ -3,11 +3,11 @@
 A self-hosted CI/CD platform: pipelines defined in YAML, jobs scheduled as a dependency DAG,
 executed in Docker containers by a pool of workers that recovers automatically from crashes.
 
-> **Status: Phase 4 of 6 complete.** Push to a connected GitHub repo and Conveyor checks out
-> the commit, runs its `.conveyor.yml` across a pool of workers, streams the logs live to a
-> React dashboard, and reports ✓/✗ on the commit. This repository builds itself on Conveyor
-> (see [`.conveyor.yml`](.conveyor.yml)).
-> Next up: load testing with published throughput and latency numbers.
+> **Status: complete.** Push to a connected GitHub repo and Conveyor checks out the commit,
+> runs its `.conveyor.yml` across a pool of workers, streams the logs live to a React
+> dashboard, and reports ✓/✗ on the commit. This repository builds itself on Conveyor
+> (see [`.conveyor.yml`](.conveyor.yml)). [Load-tested](#performance): throughput, scheduling
+> latency, horizontal scaling and crash recovery are measured and published below.
 
 ![Run page: pipeline graph and live logs](docs/dashboard-run.png)
 
@@ -62,7 +62,73 @@ PENDING ──deps succeeded──► QUEUED ──claimed──► RUNNING ─�
 | Two schedulers running | A transaction-scoped Postgres advisory lock allows one pass at a time |
 | Clock skew between machines | Leases use the database clock (`now()`), never the worker's |
 
+## Performance
+
+<!-- bench:start -->
+Measured 2026-09-23 on Apple M1, 8 CPUs, 8 GB RAM. API, workers, Postgres and Redis all on this one machine.
+Jobs use the simulated runtime (no containers), so these numbers are the engine's own overhead.
+Workers have 8 slots each; lease = 10 s. Reproduce with `python3 bench/loadtest.py`.
+
+### 1. Scheduling latency: event wake-ups vs. interval polling
+
+24 concurrent 5-job chains of no-op jobs. *Hop* = time from a job finishing to the job that depends on it starting on a worker.
+
+| | interval only (1 s) | with wake-ups | improvement |
+|---|---|---|---|
+| Hop latency p50 | 624 ms | 81 ms | 8× faster |
+| Hop latency p95 | 1.08 s | 188 ms | 6× faster |
+| Hop latency p99 | 1.13 s | 262 ms | 4× faster |
+| Trigger → first job running, p50 | 2.71 s | 968 ms | 3× faster |
+| 5-job run end to end, p50 | 8.01 s | 1.78 s | 4× faster |
+
+### 2. Throughput and horizontal scaling
+
+Independent 1-second jobs saturating every slot. Efficiency = ideal time / actual time.
+
+| Workers | Slots | Jobs | Time | Jobs/min | Efficiency |
+|---|---|---|---|---|---|
+| 1 | 8 | 256 | 33.27 s | 462 | 96.2% |
+| 2 | 16 | 256 | 17.79 s | 863 | 89.9% |
+| 4 | 32 | 256 | 9.48 s | 1,620 | 84.4% |
+
+### 3. Burst of pushes
+
+500 runs submitted by 16 concurrent clients (one project each).
+
+- Accepted at **94 runs/s**; API latency p50 160 ms, p95 248 ms, p99 326 ms
+- All 500 runs finished 5.92 s after the first request
+
+### 4. Crash recovery
+
+Two workers; one is killed with `kill -9` while running 8 jobs.
+
+- 8 orphaned jobs detected and re-queued within **7.6 s** (lease 10 s)
+- **8/8 runs succeeded**: no job lost, no run failed
+<!-- bench:end -->
+
+**How it's measured** ([`bench/loadtest.py`](bench/loadtest.py)): the script starts a real
+cluster (one API/scheduler process and up to four worker processes, 8 slots each) against a
+separate database, drives it with synthetic pipelines, and reads every timestamp from Postgres,
+the engine's own source of truth. Jobs use a *simulated runtime* (`conveyor.runtime=simulated`),
+where `sleep 1` really waits a second but no container starts, so the numbers show the engine's
+overhead rather than Docker's per-job container start-up and teardown time.
+
+**What the load test changed.** The first version of the scheduler only ran on a 1-second
+timer, so every edge in a pipeline's DAG waited for the next pass: about half a second per
+dependency on average. Now a run being created, a job finishing or a run being cancelled
+*wakes* the scheduler through Redis. Wake-ups are sent after the database commit, collapse into
+one pass when they arrive in bursts, and the 1-second timer stays as a safety net (it also reaps
+expired leases and ends retry backoffs). Both modes are measured in section 1.
+
 ## Features by phase
+
+**Phase 6: load testing and scheduler wake-ups**
+- Reproducible load test: DAG latency, throughput on 1/2/4 workers, a burst of 500 runs, and a
+  `kill -9` of a worker mid-run; results published above
+- Event-driven scheduling: passes triggered by run creation, job completion and cancellation
+  via a Redis wake-up list (after commit, coalesced), with the interval pass as a fallback
+- Simulated container runtime for measuring the engine in isolation
+
 
 **Phase 4: dashboard and live logs**
 - React + TypeScript dashboard (Vite, no UI framework): recent runs with pass rate and worker
@@ -240,12 +306,14 @@ resources, `409` for conflicts, and `422` for an invalid pipeline, with an `erro
 | Property | Default | Meaning |
 |---|---|---|
 | `conveyor.scheduler.enabled` | `true` | Run the scheduler in this process |
-| `conveyor.scheduler.interval-ms` | `1000` | Scheduler pass interval |
+| `conveyor.scheduler.interval-ms` | `1000` | Safety-net pass interval (reaps leases, ends backoffs) |
+| `conveyor.scheduler.wake-on-events` | `true` | Run a pass as soon as a run is created or a job finishes |
 | `conveyor.worker.enabled` | `true` | Run a worker in this process |
 | `conveyor.worker.concurrency` | `2` | Jobs this worker runs at once |
 | `conveyor.worker.lease-seconds` | `30` | Time until a silent worker's job is re-queued |
 | `conveyor.retry.base-delay-ms` / `max-delay-ms` | `2000` / `60000` | Retry backoff |
 | `conveyor.docker.memory` / `cpus` | `1g` / `1` | Per-job container limits |
+| `conveyor.runtime` | `docker` | `simulated` runs nothing and is for load tests only |
 | `conveyor.github.token` (`GITHUB_TOKEN`) | empty | Needed for commit statuses and private repos |
 | `conveyor.github.webhook-secret` (`GITHUB_WEBHOOK_SECRET`) | empty | Webhooks are rejected until set |
 | `conveyor.github.pipeline-path` | `.conveyor.yml` | Pipeline file read from each commit |
@@ -269,14 +337,17 @@ resources, `409` for conflicts, and `422` for an invalid pipeline, with an `erro
   and more reliable than calling GitHub inline from the scheduler.
 - **Tarball checkout on the worker, not `git clone` in the job.** Works with images that don't
   have git, and downloads one commit instead of the full history.
+- **Wake-ups plus a timer, not wake-ups alone.** Event wake-ups make the common path fast;
+  the timer makes a lost wake-up (Redis restart, a crashed process) cost one interval, never a
+  stuck pipeline. Correctness never depends on a wake-up arriving.
 - **Docker CLI over a Docker SDK.** Zero extra dependencies; works with Docker Desktop,
   Colima or a remote `DOCKER_HOST`.
 - **Collect all validation errors, strict unknown-key rejection, parse before locking.**
   (Phase 1.)
 
 **Known limitations:** the API has no authentication yet, so anyone who can reach it (e.g. via a
-public ngrok URL) can cancel or re-run builds; GitHub OAuth login comes with the deployment in
-Phase 5. Also, a worker killed with `kill -9` leaves its job container running
+public ngrok URL) can cancel or re-run builds; GitHub OAuth login is planned together with a
+cloud deployment. Also, a worker killed with `kill -9` leaves its job container running
 (label `conveyor.managed=true`); a janitor is planned. Jobs don't share files yet; artifacts
 come in a later phase.
 
@@ -286,5 +357,5 @@ come in a later phase.
 2. ~~Redis job queue, Docker workers, heartbeats and lease-based recovery, retries with backoff~~
 3. ~~GitHub webhooks (HMAC-verified), repo checkout, commit statuses~~
 4. ~~Live log streaming (Redis pub/sub → Server-Sent Events) and a React dashboard~~
-5. AWS deployment with GitHub OAuth login; the platform runs its own CI
-6. Load testing and published numbers (throughput, queue latency, recovery time)
+5. Cloud deployment with GitHub OAuth login (planned)
+6. ~~Load testing and published numbers (throughput, scheduling latency, recovery time)~~

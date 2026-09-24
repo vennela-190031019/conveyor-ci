@@ -52,6 +52,7 @@ public class Worker implements SmartLifecycle {
     private final ContainerRuntime runtime;
     private final SourceFetcher sourceFetcher;
     private final LiveLogPublisher liveLogs;
+    private final SchedulerWakeup wakeup;
     private final String workerId;
     private final String hostname;
     private final int concurrency;
@@ -65,7 +66,7 @@ public class Worker implements SmartLifecycle {
     private ScheduledExecutorService timers;
 
     public Worker(JobQueue queue, JobStore store, ContainerRuntime runtime, SourceFetcher sourceFetcher,
-                  LiveLogPublisher liveLogs,
+                  LiveLogPublisher liveLogs, SchedulerWakeup wakeup,
                   @Value("${conveyor.worker.id:}") String configuredId,
                   @Value("${conveyor.worker.concurrency:2}") int concurrency,
                   @Value("${conveyor.worker.lease-seconds:30}") int leaseSeconds,
@@ -76,6 +77,7 @@ public class Worker implements SmartLifecycle {
         this.runtime = runtime;
         this.sourceFetcher = sourceFetcher;
         this.liveLogs = liveLogs;
+        this.wakeup = wakeup;
         this.hostname = resolveHostname();
         this.workerId = configuredId == null || configuredId.isBlank()
                 ? hostname + "-" + UUID.randomUUID().toString().substring(0, 8)
@@ -281,6 +283,8 @@ public class Worker implements SmartLifecycle {
             log.info("job {} attempt {} failed ({}); job is now {}", job.id(), job.attempt(), failure,
                     next.orElse("owned by someone else"));
         }
+        // Dependents can start (or be skipped) and the run may be finished: don't wait for the next pass.
+        wakeup.wake();
         live.close(finalStatus);
     }
 
